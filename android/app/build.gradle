@@ -5,7 +5,11 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-def localProperties = new Properties()
+flutter {
+    source = "../.."
+}
+
+def localProperties = new java.util.Properties()
 def localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.withReader("UTF-8") { reader ->
@@ -42,6 +46,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
+        
+        // Add application name for manifest
+        manifestPlaceholders = [
+            applicationName: "android.app.Application"
+        ]
     }
 
     buildTypes {
@@ -51,20 +60,4 @@ android {
             signingConfig = signingConfigs.debug
         }
     }
-}
-
-flutter {
-    source = "../.."
-}
-
-// Ensure Kotlin compiles to the same JVM target as Java
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-    kotlinOptions {
-        jvmTarget = '17'
-    }
-}
-
-// Use JVM toolchain 17 for Kotlin (recommended)
-kotlin {
-    jvmToolchain(17)
 }
