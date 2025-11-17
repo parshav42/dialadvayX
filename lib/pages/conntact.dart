@@ -6,6 +6,9 @@ import 'package:contacts_service/contacts_service.dart';
 import '../services/contact_overrides.dart';
 import 'edit_contact_page.dart';
 import '../services/speak_history.dart';
+import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../services/call_log.dart';
 
 class ContactPage extends StatefulWidget {
   const ContactPage({super.key});
@@ -22,6 +25,8 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
   Map<String, ContactOverride> _overrides = {};
   final SpeakHistoryStore _historyStore = SpeakHistoryStore();
   final Set<String> _expanded = {};
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
   
   AnimationController? _appBarController;
   Animation<double>? _appBarSizeFactor;
@@ -51,6 +56,7 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
   @override
   void dispose() {
     _appBarController?.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -218,20 +224,44 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
       );
     }
 
+    final filtered = _contacts.where((c) {
+      if (_query.trim().isEmpty) return true;
+      final q = _query.toLowerCase();
+      final name = (c.displayName ?? '').toLowerCase();
+      final phone = (c.phones?.isNotEmpty == true ? (c.phones!.first.value ?? '') : '').toLowerCase();
+      final id = _contactIdFor(c).toLowerCase();
+      final overrideName = (_overrides[_contactIdFor(c)]?.name ?? '').toLowerCase();
+      return name.contains(q) || phone.contains(q) || id.contains(q) || overrideName.contains(q);
+    }).toList();
+
     return ListView.builder(
-      itemCount: _contacts.length,
+      itemCount: filtered.length + 1,
       itemBuilder: (context, index) {
-        Contact contact = _contacts[index];
-        // Ensure the contact has a display name and at least one phone number
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: TextField(
+              controller: _searchCtrl,
+              decoration: InputDecoration(
+                hintText: 'Search contacts',
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          );
+        }
+
+        final contact = filtered[index - 1];
         if (contact.displayName == null || contact.phones == null || contact.phones!.isEmpty) {
-          return const SizedBox.shrink(); // Return an empty widget if data is incomplete
+          return const SizedBox.shrink();
         }
 
         final contactId = _contactIdFor(contact);
         final override = _overrides[contactId];
-        final displayName = (override?.name?.isNotEmpty ?? false)
-            ? override!.name!
-            : contact.displayName!;
+        final displayName = (override?.name?.isNotEmpty ?? false) ? override!.name! : contact.displayName!;
         final phone = contact.phones!.first.value!;
         final String? photoPath = override?.photoPath;
 
@@ -239,149 +269,196 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ListTile(
-          leading: GestureDetector(
-            onTap: () async {
-              final saved = await Navigator.of(context).push<bool>(
-                MaterialPageRoute(
-                  builder: (_) => EditContactPage(
-                    contactId: contactId,
-                    initialName: displayName,
-                    initialPhotoPath: photoPath,
-                  ),
-                ),
-              );
-              if (saved == true) {
-                await _loadOverrides();
-                if (mounted) setState(() {});
-              }
-            },
-            child: CircleAvatar(
-              child: (photoPath == null)
-                  ? const Icon(Icons.person)
-                  : null,
-              backgroundImage: (photoPath != null && File(photoPath).existsSync())
-                  ? FileImage(File(photoPath))
-                  : null,
-            ),
-          ),
-          title: GestureDetector(
-            onTap: () {
-              setState(() {
-                if (_expanded.contains(contactId)) {
-                  _expanded.clear();
-                } else {
-                  _expanded
-                    ..clear()
-                    ..add(contactId);
-                }
-              });
-            },
-            child: Text(displayName),
-          ),
-          subtitle: _expanded.contains(contactId)
-              ? null
-              : Text(
-                  phone,
-                  style: const TextStyle(fontSize: 12),
-                ),
-          trailing: null,
-          onTap: () {
-            // Handle contact tap if needed
-          },
-        ),
-        if (_expanded.contains(contactId))
-          Padding(
-            padding: const EdgeInsets.fromLTRB(72, 0, 16, 8),
-            child: FutureBuilder<List<SpeakEntry>>(
-              future: _historyStore.loadEntries(contactId),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: SizedBox(height: 20, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
-                  );
-                }
-                final items = snapshot.data ?? const <SpeakEntry>[];
-                if (items.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 4),
-                    child: Text('No history yet', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                  );
-                }
-                final limited = items.take(3).toList();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ListView.builder(
-                      itemCount: limited.length,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemBuilder: (context, i) {
-                        final e = limited[i];
-                        final subtitle = (e.note != null && e.note!.trim().isNotEmpty)
-                            ? ' • ' + e.note!.trim()
-                            : '';
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Text(_format(e.when) + subtitle, style: const TextStyle(fontSize: 12)),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton(
-                        style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                        onPressed: () async {
-                          final suggestions = await _generateNameSuggestions(
-                            contactId: contactId,
-                            currentName: displayName,
-                            phone: phone,
-                          );
-                          if (!mounted) return;
-                          if (suggestions.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('No suggestions available yet.')),
-                            );
-                            return;
-                          }
-                          final chosen = await showDialog<String>(
-                            context: context,
-                            builder: (context) {
-                              return SimpleDialog(
-                                title: const Text('Suggest a name'),
-                                children: [
-                                  for (final s in suggestions)
-                                    SimpleDialogOption(
-                                      onPressed: () => Navigator.of(context).pop(s),
-                                      child: Text(s),
-                                    ),
-                                ],
-                              );
-                            },
-                          );
-                          if (chosen != null && chosen.trim().isNotEmpty) {
-                            await _store.upsert(ContactOverride(
-                              id: contactId,
-                              name: chosen.trim(),
-                              photoPath: photoPath,
-                            ));
-                            await _loadOverrides();
-                            if (mounted) setState(() {});
-                          }
-                        },
-                        child: const Text('Suggest name'),
+              leading: GestureDetector(
+                onTap: () async {
+                  final saved = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute(
+                      builder: (_) => EditContactPage(
+                        contactId: contactId,
+                        initialName: displayName,
+                        initialPhotoPath: photoPath,
                       ),
                     ),
-                  ],
-                );
-              },
+                  );
+                  if (saved == true) {
+                    await _loadOverrides();
+                    if (mounted) setState(() {});
+                  }
+                },
+                child: CircleAvatar(
+                  child: (photoPath == null) ? const Icon(Icons.person) : null,
+                  backgroundImage: (photoPath != null && File(photoPath).existsSync())
+                      ? FileImage(File(photoPath))
+                      : null,
+                ),
+              ),
+              title: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    if (_expanded.contains(contactId)) {
+                      _expanded.clear();
+                    } else {
+                      _expanded
+                        ..clear()
+                        ..add(contactId);
+                    }
+                  });
+                },
+                child: Text(displayName),
+              ),
+              subtitle: _expanded.contains(contactId)
+                  ? null
+                  : GestureDetector(
+                      onTap: () => _callFromContact(phone, name: displayName),
+                      child: Text(
+                        phone,
+                        style: const TextStyle(fontSize: 12, color: Colors.blue),
+                      ),
+                    ),
+              trailing: IconButton(
+                icon: const Icon(Icons.call),
+                onPressed: () => _callFromContact(phone, name: displayName),
+                tooltip: 'Call',
+              ),
+              onTap: () {},
             ),
-          ),
-        ],
+            if (_expanded.contains(contactId))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(72, 0, 16, 8),
+                child: FutureBuilder<List<SpeakEntry>>(
+                  future: _historyStore.loadEntries(contactId),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: SizedBox(height: 20, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
+                      );
+                    }
+                    final items = snapshot.data ?? const <SpeakEntry>[];
+                    if (items.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 4),
+                        child: Text('No history yet', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      );
+                    }
+                    final limited = items.take(3).toList();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListView.builder(
+                          itemCount: limited.length,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemBuilder: (context, i) {
+                            final e = limited[i];
+                            final subtitle = (e.note != null && e.note!.trim().isNotEmpty)
+                                ? ' • ' + e.note!.trim()
+                                : '';
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Text(_format(e.when) + subtitle, style: const TextStyle(fontSize: 12)),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                            onPressed: () async {
+                              final suggestions = await _generateNameSuggestions(
+                                contactId: contactId,
+                                currentName: displayName,
+                                phone: phone,
+                              );
+                              if (!mounted) return;
+                              if (suggestions.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('No suggestions available yet.')),
+                                );
+                                return;
+                              }
+                              final chosen = await showDialog<String>(
+                                context: context,
+                                builder: (context) {
+                                  return SimpleDialog(
+                                    title: const Text('Suggest a name'),
+                                    children: [
+                                      for (final s in suggestions)
+                                        SimpleDialogOption(
+                                          onPressed: () => Navigator.of(context).pop(s),
+                                          child: Text(s),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              );
+                              if (chosen != null && chosen.trim().isNotEmpty) {
+                                await _store.upsert(ContactOverride(
+                                  id: contactId,
+                                  name: chosen.trim(),
+                                  photoPath: photoPath,
+                                ));
+                                await _loadOverrides();
+                                if (mounted) setState(() {});
+                              }
+                            },
+                            child: const Text('Suggest name'),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+          ],
         );
       },
     );
+  }
+
+  Future<void> _callFromContact(String raw, {String? name}) async {
+    if (raw.trim().isEmpty) return;
+    String digits = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (!digits.startsWith('+') && RegExp(r'^\d{10}$').hasMatch(digits)) {
+      digits = '+91$digits';
+    }
+
+    bool placed = false;
+    if (Platform.isAndroid) {
+      final perm = await Permission.phone.request();
+      if (perm.isGranted) {
+        try {
+          placed = await FlutterPhoneDirectCaller.callNumber(digits) ?? false;
+        } catch (_) {
+          placed = false;
+        }
+      }
+    }
+
+    if (!placed) {
+      final uri = Uri(scheme: 'tel', path: digits);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cannot launch dialer')),
+          );
+        }
+      }
+    }
+
+    try {
+      await CallLogStore().add(
+        CallLogEntry(
+          number: digits,
+          when: DateTime.now(),
+          name: name,
+          note: null,
+        ),
+      );
+    } catch (_) {}
   }
 
   String _format(DateTime dt) {

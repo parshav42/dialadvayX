@@ -30,7 +30,7 @@ if (flutterVersionName == null) {
 android {
     namespace = "com.a3s.advayx_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "25.1.8937393"  // Specified NDK version
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
