@@ -146,13 +146,15 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
   Widget build(BuildContext context) {
     if (_appBarController == null || _appBarSizeFactor == null || _appBarOpacity == null) {
       return Scaffold(
+        backgroundColor: Colors.white,
         appBar: AppBar(
-          title: const Text('Connect from Contacts'),
-          backgroundColor: const Color(0xFF7E57C2),
+          title: const Text('Contacts', style: TextStyle(color: Colors.white)),
+          backgroundColor: const Color(0xFF4CAF50), // Soft green
+          iconTheme: const IconThemeData(color: Colors.white),
           titleTextStyle: const TextStyle(
             color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
             letterSpacing: 0.5,
           ),
         ),
@@ -175,11 +177,11 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
                     child: FadeTransition(
                       opacity: _appBarOpacity!,
                       child: AppBar(
-                        title: const Text('Connect from Contacts'),
-                        backgroundColor: const Color(0xFF7E57C2),
+                        title: const Text('Contacts'),
+                        backgroundColor: const Color(0xFFFFFFFF),
                         titleTextStyle: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
+                          color: Colors.black,
+                          fontSize: 21,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.5,
                         ),
@@ -199,7 +201,13 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(
+            Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      );
     }
 
     if (_errorMessage.isNotEmpty) {
@@ -209,7 +217,9 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
           child: Text(
             _errorMessage,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 16, color: Colors.red),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+            ),
           ),
         ),
       );
@@ -248,6 +258,8 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                filled: true,
+                fillColor: Colors.white,
               ),
               onChanged: (v) => setState(() => _query = v),
             ),
@@ -255,15 +267,20 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
         }
 
         final contact = filtered[index - 1];
-        if (contact.displayName == null || contact.phones == null || contact.phones!.isEmpty) {
-          return const SizedBox.shrink();
-        }
-
         final contactId = _contactIdFor(contact);
         final override = _overrides[contactId];
-        final displayName = (override?.name?.isNotEmpty ?? false) ? override!.name! : contact.displayName!;
-        final phone = contact.phones!.first.value!;
+        final displayName = (override?.name?.isNotEmpty ?? false) ? override!.name! : contact.displayName ?? 'Unknown';
+        
+        // Safely get the first phone number or use a default
+        final phoneNumber = (contact.phones?.isNotEmpty ?? false) 
+            ? contact.phones!.first.value 
+            : 'No number';
         final String? photoPath = override?.photoPath;
+        
+        // Skip this contact if there's no valid phone number
+        if (phoneNumber == null || phoneNumber.isEmpty) {
+          return const SizedBox.shrink();
+        }
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -276,6 +293,7 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
                       builder: (_) => EditContactPage(
                         contactId: contactId,
                         initialName: displayName,
+                        initialPhone: phoneNumber,
                         initialPhotoPath: photoPath,
                       ),
                     ),
@@ -309,15 +327,15 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
               subtitle: _expanded.contains(contactId)
                   ? null
                   : GestureDetector(
-                      onTap: () => _callFromContact(phone, name: displayName),
+                      onTap: () => _callFromContact(phoneNumber, name: displayName),
                       child: Text(
-                        phone,
+                        phoneNumber,
                         style: const TextStyle(fontSize: 12, color: Colors.blue),
                       ),
                     ),
               trailing: IconButton(
                 icon: const Icon(Icons.call),
-                onPressed: () => _callFromContact(phone, name: displayName),
+                onPressed: () => _callFromContact(phoneNumber, name: displayName),
                 tooltip: 'Call',
               ),
               onTap: () {},
@@ -369,7 +387,7 @@ class _ContactPageState extends State<ContactPage> with SingleTickerProviderStat
                               final suggestions = await _generateNameSuggestions(
                                 contactId: contactId,
                                 currentName: displayName,
-                                phone: phone,
+                                phone: phoneNumber,
                               );
                               if (!mounted) return;
                               if (suggestions.isEmpty) {
