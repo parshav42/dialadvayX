@@ -1,15 +1,19 @@
+// lib/pages/home_page.dart
+
 import 'package:flutter/material.dart';
 import 'dart:io' show Platform;
-import 'edit_contact_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/contact_overrides.dart';
-import '../services/call_log.dart';
+import 'package:permission_handler/permission_handler.dart' as permission_handler;
+
 import 'conntact.dart';
 import 'record_page.dart';
+import '../services/permission_service.dart';
+import '../services/contact_overrides.dart';
+import '../services/call_log.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -21,38 +25,116 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _index = 1;
 
-  final List<Widget> _pages = [
-    const ContactPage(),
-    const _CenterHome(),
-    const RecordPage(),
+  final List<Widget> _pages = const [
+    ContactPage(), // Contacts tab
+    _CenterHome(), // Dialpad
+    RecordPage(),  // Recordings tab
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showInitialPermissionPopup();
+    });
+  }
+
+  // ---------------------------------------------------------
+  // FIRST TIME POPUP (Truecaller style)
+  // ---------------------------------------------------------
+  Future<void> _showInitialPermissionPopup() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => AlertDialog(
+        title: const Text("Permissions Required"),
+        content: const Text(
+          "To use AdvayX properly we need:\n\n"
+              "• Contacts – show contact names\n"
+              "• Phone – calling & call detection\n"
+              "• Microphone – call recording\n"
+              "• Storage – save call recordings\n\n"
+              "Tap Continue to allow permissions.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text("Not Now"),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(c);
+              final granted = await PermissionService.requestAllPermissions();
+
+              if (!granted && mounted) {
+                _showSettingsDialog();
+              }
+            },
+            child: const Text("Continue"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------
+  // USER DENIED → Show "Open Settings"
+  // ---------------------------------------------------------
+  Future<void> _showSettingsDialog() async {
+    showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text("Permission Needed"),
+        content: const Text(
+          "Some permissions were denied.\n"
+              "You must enable them from settings.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(c);
+              permission_handler.openAppSettings();
+            },
+            child: const Text("Open Settings"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          "advayX",
-          style: Theme.of(context).appBarTheme.titleTextStyle?.copyWith(
-                color: Theme.of(context).colorScheme.onPrimary,
-                fontWeight: FontWeight.w600,
-              ),
+        title: const Text(
+          "AdvayX",
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        iconTheme: IconThemeData(
-          color: Theme.of(context).colorScheme.onPrimary,
-        ),
+        backgroundColor: Colors.blue,
         elevation: 0,
       ),
+
       body: _pages[_index],
+
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         onTap: (i) => setState(() => _index = i),
-        selectedItemColor: Colors .blue[900],
+        selectedItemColor: Colors.blue[900],
         unselectedItemColor: Colors.grey,
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: "Recents"),
-          BottomNavigationBarItem(icon: Icon(Icons.dialpad), label: "Dialpad"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.history), label: "Recents"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.dialpad), label: "Dialpad"),
           BottomNavigationBarItem(
               icon: Icon(Icons.audio_file), label: "Recordings"),
         ],
@@ -60,6 +142,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
+// ===================================================================
+// DIALPAD PAGE
+// ===================================================================
 
 class _CenterHome extends StatefulWidget {
   const _CenterHome({super.key});
@@ -91,6 +177,7 @@ class _CenterHomeState extends State<_CenterHome> {
     {'text': '*', 'sub': ''},
     {'text': '0', 'sub': '+'},
     {'text': '#', 'sub': ''},
+    {'text': '', 'sub': '', 'isBackspace': true},
   ];
 
   @override
@@ -108,40 +195,34 @@ class _CenterHomeState extends State<_CenterHome> {
     });
   }
 
-  Future<void> _saveRecent(String number, {String? name}) async {
+  Future<void> _saveRecent(String num, {String? name}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("recent_number", number);
+    await prefs.setString("recent_number", num);
+
     if (name != null && name.trim().isNotEmpty) {
       await prefs.setString("recent_name", name.trim());
     }
-    _loadRecent();
   }
 
-  void _onDialPress(String value) {
+  // ---------------------------------------------------------
+  void _onDialPress(String d) {
     if (_numberCtrl.text.length >= 10) return;
-
-    setState(() {
-      _numberCtrl.text += value;
-    });
+    setState(() => _numberCtrl.text += d);
   }
 
   void _onBackspace() {
     if (_numberCtrl.text.isEmpty) return;
-
-    setState(() {
-      _numberCtrl.text =
-          _numberCtrl.text.substring(0, _numberCtrl.text.length - 1);
-    });
+    setState(() =>
+    _numberCtrl.text = _numberCtrl.text.substring(0, _numberCtrl.text.length - 1)
+    );
   }
 
+  // ---------------------------------------------------------
   Future<void> _startCallAndCapture() async {
     String num = _numberCtrl.text;
 
     if (num.isEmpty) return;
-
-    if (num.length == 10) {
-      num = "+91$num";
-    }
+    if (num.length == 10) num = "+91$num";
 
     await _saveRecent(num);
 
@@ -150,13 +231,12 @@ class _CenterHomeState extends State<_CenterHome> {
     if (Platform.isAndroid) {
       final p = await Permission.phone.request();
       if (p.isGranted) {
-        placed =
-            await FlutterPhoneDirectCaller.callNumber(num.toString()) ?? false;
+        placed = await FlutterPhoneDirectCaller.callNumber(num) ?? false;
       }
     }
 
     if (!placed) {
-      final uri = Uri(scheme: "tel", path: num.toString());
+      final uri = Uri(scheme: "tel", path: num);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       }
@@ -177,9 +257,7 @@ class _CenterHomeState extends State<_CenterHome> {
       listenFor: const Duration(seconds: 20),
       partialResults: true,
       onResult: (r) {
-        setState(() {
-          _transcript = r.recognizedWords;
-        });
+        setState(() => _transcript = r.recognizedWords);
       },
     );
 
@@ -189,26 +267,26 @@ class _CenterHomeState extends State<_CenterHome> {
     setState(() => _isListening = false);
 
     final cleaned = _cleanName(_transcript);
-
     if (cleaned.isNotEmpty) {
       final name = _titleCase(cleaned);
       await _store.upsert(ContactOverride(id: num, name: name));
-      _saveRecent(num, name: name);
+      await _saveRecent(num, name: name);
     }
 
     await CallLogStore().add(
       CallLogEntry(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
         number: num,
         name: _recentName,
         when: DateTime.now(),
+        duration: const Duration(seconds: 0),
         note: _transcript.isNotEmpty ? _transcript : null,
       ),
     );
   }
 
   String _cleanName(String s) {
-    final parts = s.trim().split(" ");
-    return parts.take(3).join(" ");
+    return s.trim().split(" ").take(3).join(" ");
   }
 
   String _titleCase(String s) {
@@ -219,105 +297,68 @@ class _CenterHomeState extends State<_CenterHome> {
         .join(" ");
   }
 
-  Widget _buildDialButton(String text, String sub) {
-    return InkWell(
-      onTap: () => _onDialPress(text),
-      borderRadius: BorderRadius.circular(48),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceVariant,
-          shape: BoxShape.circle,
-        ),
-        width: 72,
-        height: 72,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              text,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w300,
-                  ),
-            ),
-            if (sub.isNotEmpty)
-              Text(
-                sub,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
-                    ),
-              ),
-          ],
+  // ---------------------------------------------------------
+
+  Widget _buildDialButton(String text, String sub, {bool isBackspace = false}) {
+    return Padding(
+      padding: const EdgeInsets.all(10.0),
+      child: InkWell(
+        onTap: isBackspace ? _onBackspace : () => _onDialPress(text),
+        child: Container(
+          width: 75,
+          height: 75,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xFFF1F4F8),
+          ),
+          child: isBackspace
+              ? const Icon(Icons.backspace, size: 32, color: Colors.blue)
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(text, style: const TextStyle(fontSize: 32)),
+                    if (sub.isNotEmpty)
+                      Text(sub, style: const TextStyle(fontSize: 12)),
+                  ],
+                ),
         ),
       ),
     );
   }
 
+  // ---------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     return Column(
       children: [
         const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          color: Colors.white, // Light grey background
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _numberCtrl.text,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w400,
-                      letterSpacing: 2,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-                if (_numberCtrl.text.isNotEmpty)
-                  IconButton(
-                    icon: const Icon(Icons.backspace),
-                    onPressed: _onBackspace,
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                  )
-              ],
+
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              _numberCtrl.text,
+              style: const TextStyle(fontSize: 40),
             ),
-          ),
+            if (_numberCtrl.text.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.backspace),
+                onPressed: _onBackspace,
+              ),
+          ],
         ),
 
-        ..._recentName != null
-            ? [
-                Container(
-                  width: double.infinity,
-                  color: Colors.grey[100], // Light grey background
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    _recentName!,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                  ),
-                ),
-              ]
-            : [],
-
-        const SizedBox(height: 10),
+        if (_recentName != null)
+          Text(_recentName!,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
 
         Expanded(
           child: GridView.count(
             crossAxisCount: 3,
-            childAspectRatio: 1.1,
-            padding: const EdgeInsets.all(8),
-            children: _dialPadItems
-                .map((e) => _buildDialButton(e['text'], e['sub']))
-                .toList(),
+            childAspectRatio: 1.2,
+            padding: const EdgeInsets.only(top: 24, left: 12, right: 12, bottom: 40),
+            children:
+            _dialPadItems.map((e) => _buildDialButton(e['text'], e['sub'])).toList(),
           ),
         ),
 
@@ -325,20 +366,17 @@ class _CenterHomeState extends State<_CenterHome> {
           padding: const EdgeInsets.all(24),
           child: SizedBox(
             width: double.infinity,
+            height: 55,
             child: ElevatedButton(
               onPressed:
               _numberCtrl.text.isEmpty ? null : _startCallAndCapture,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.primary,
+                backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
               ),
-              child: Text(
+              child: const Text(
                 "CALL",
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
           ),

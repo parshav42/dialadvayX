@@ -1,3 +1,5 @@
+// lib/services/speak_history.dart
+
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -8,60 +10,57 @@ class SpeakEntry {
   SpeakEntry({required this.when, this.note});
 
   Map<String, dynamic> toJson() => {
-        'when': when.toUtc().toIso8601String(),
-        if (note != null) 'note': note,
-      };
+    "when": when.toIso8601String(),
+    "note": note,
+  };
 
-  factory SpeakEntry.fromJson(Map<String, dynamic> json) => SpeakEntry(
-        when: DateTime.parse(json['when'] as String).toLocal(),
-        note: json['note'] as String?,
-      );
+  static SpeakEntry fromJson(Map<String, dynamic> map) => SpeakEntry(
+    when: DateTime.parse(map["when"]),
+    note: map["note"],
+  );
 }
 
 class SpeakHistoryStore {
-  String _key(String contactId) => 'speak_history_' + contactId;
+  static const _key = "speak_history";
 
-  // Backward-compatible: returns dates only.
-  Future<List<DateTime>> loadHistory(String contactId) async {
-    final entries = await loadEntries(contactId);
-    final dates = entries.map((e) => e.when).toList()
-      ..sort((a, b) => b.compareTo(a));
-    return dates;
+  Future<Map<String, List<SpeakEntry>>> _loadAll() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final raw = prefs.getString(_key);
+    if (raw == null) return {};
+
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+
+    final map = <String, List<SpeakEntry>>{};
+
+    decoded.forEach((id, list) {
+      map[id] = (list as List)
+          .map((e) => SpeakEntry.fromJson(e))
+          .toList();
+    });
+
+    return map;
   }
 
-  // New: full entries with optional notes.
-  Future<List<SpeakEntry>> loadEntries(String contactId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_key(contactId)) ?? <String>[];
-    final entries = <SpeakEntry>[];
-    for (final s in list) {
-      if (s.trim().startsWith('{')) {
-        try {
-          final map = jsonDecode(s) as Map<String, dynamic>;
-          entries.add(SpeakEntry.fromJson(map));
-          continue;
-        } catch (_) {}
-      }
-      // Fallback legacy ISO timestamp without note
-      try {
-        entries.add(SpeakEntry(when: DateTime.parse(s).toLocal()));
-      } catch (_) {}
-    }
-    entries.sort((a, b) => b.when.compareTo(a.when));
-    return entries;
+  Future<List<SpeakEntry>> loadEntries(String id) async {
+    final all = await _loadAll();
+    return all[id] ?? [];
   }
 
-  Future<void> logSpeak(String contactId, DateTime when, {String? note}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = _key(contactId);
-    final list = prefs.getStringList(key) ?? <String>[];
-    final entry = SpeakEntry(when: when, note: note);
-    list.add(jsonEncode(entry.toJson()));
-    await prefs.setStringList(key, list);
-  }
+  Future<void> add(String id, SpeakEntry entry) async {
+    final all = await _loadAll();
 
-  Future<void> clearHistory(String contactId) async {
+    final list = all[id] ?? [];
+    list.insert(0, entry);
+
+    all[id] = list;
+
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_key(contactId));
+    final encoded = jsonEncode(
+      all.map((key, value) =>
+          MapEntry(key, value.map((e) => e.toJson()).toList())),
+    );
+
+    await prefs.setString(_key, encoded);
   }
 }

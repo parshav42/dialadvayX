@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>advayX</string>
+	<string>AdvayX</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>advayX</string>
+	<string>AdvayX</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -44,6 +44,19 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
+
 	<true/>
+	<key>NSCameraUsageDescription</key>
+    <string>This app needs camera access to take photos for contacts.</string>
+
+    <key>NSContactsUsageDescription</key>
+    <string>This app needs access to your contacts to manage and edit them.</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>This app needs microphone access for voice dialing and speech input.</string>
+
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>This app needs access to your photo library to choose and save contact photos.</string>
+
 </dict>
 </plist>

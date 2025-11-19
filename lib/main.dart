@@ -1,9 +1,29 @@
 import 'package:advayx_app/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'pages/splash_page.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Check if we've shown permissions before
+  final prefs = await SharedPreferences.getInstance();
+  final permissionsShown = prefs.getBool('permissions_shown') ?? false;
+  
+  // Request all permissions if not shown before
+  if (!permissionsShown) {
+    await [
+      Permission.contacts,
+      Permission.phone,
+      Permission.microphone,
+      Permission.storage,
+    ].request();
+    
+    await prefs.setBool('permissions_shown', true);
+  }
+  
   runApp(const MyApp());
 }
 
@@ -16,7 +36,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme(),
       darkTheme: AppTheme.darkTheme(),
-      themeMode: ThemeMode.system, // Use system theme mode
+      themeMode: ThemeMode.system,
       home: const SplashPage(),
     );
   }
