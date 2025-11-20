@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:contacts_service/contacts_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../services/contact_overrides.dart';
 
@@ -43,16 +46,63 @@ class _EditContactPageState extends State<EditContactPage> {
   }
 
   Future<void> _save() async {
-    await ContactOverridesStore().upsert(
-      ContactOverride(
-        id: widget.contactId,
-        name: _nameCtrl.text.trim(),
-        photoPath: _photoPath,
-      ),
-    );
+    try {
+      final name = _nameCtrl.text.trim();
+      if (name.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a name')),
+        );
+        return;
+      }
 
-    if (!mounted) return;
-    Navigator.pop(context, true);
+      // Save the contact override
+      await ContactOverridesStore().upsert(
+        ContactOverride(
+          id: widget.contactId,
+          name: name,
+          photoPath: _photoPath,
+        ),
+      );
+
+      // Also save to device contacts if permission is granted
+      if (await Permission.contacts.request().isGranted) {
+        try {
+          // Create a new contact
+          final contact = Contact(
+            givenName: name,
+            phones: [Item(value: widget.initialPhone)],
+            avatar: _photoPath != null ? File(_photoPath!).readAsBytesSync() : null,
+          );
+          
+          // Add or update the contact in the device's contact list
+          await ContactsService.addContact(contact);
+        } catch (e) {
+          debugPrint('Error saving to device contacts: $e');
+          // Continue even if device contact save fails
+        }
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      debugPrint('Error saving contact: $e');
+      if (!mounted) return;
+      
+      // Show error message
+      String errorMessage = 'Error saving contact';
+      if (e is PlatformException) {
+        errorMessage = e.message ?? errorMessage;
+      } else if (e is String) {
+        errorMessage = e;
+      } else if (e is FormatException) {
+        errorMessage = 'Invalid contact format. Please check the details and try again.';
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+    }
   }
 
   @override

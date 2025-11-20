@@ -1,104 +1,44 @@
 // lib/services/permission_service.dart
 
-import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-
-// For opening app settings
-import 'package:permission_handler/permission_handler.dart' as permission_handler;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PermissionService {
-  // ----------------------------------------------------
-  // BASIC CHECKERS
-  // ----------------------------------------------------
-  static Future<bool> hasMicrophonePermission() async =>
-      await Permission.microphone.isGranted;
-
-  static Future<bool> hasStoragePermission() async =>
-      await Permission.storage.isGranted;
-
-  static Future<bool> hasPhonePermission() async =>
-      await Permission.phone.isGranted;
-
-  static Future<bool> hasContactsPermission() async =>
-      await Permission.contacts.isGranted;
-
-  static Future<bool> hasAllPermissions() async {
-    return await Permission.microphone.isGranted &&
-        await Permission.storage.isGranted &&
-        await Permission.phone.isGranted &&
-        await Permission.contacts.isGranted;
+  // --------------------------------------------------------
+  // CHECK: Has user already pressed CONTINUE in the popup?
+  // --------------------------------------------------------
+  static Future<bool> hasUserAcceptedPermissions() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool("accepted_permissions") ?? false;
   }
 
-  // ----------------------------------------------------
-  // REQUEST SINGLE
-  // ----------------------------------------------------
-  static Future<bool> requestMicrophonePermission() async =>
-      await Permission.microphone.request().isGranted;
+  // --------------------------------------------------------
+  // SAVE user pressed CONTINUE
+  // --------------------------------------------------------
+  static Future<void> saveUserAccepted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool("accepted_permissions", true);
+  }
 
-  static Future<bool> requestStoragePermission() async =>
-      await Permission.storage.request().isGranted;
-
-  static Future<bool> requestPhonePermission() async =>
-      await Permission.phone.request().isGranted;
-
-  static Future<bool> requestContactsPermission() async =>
-      await Permission.contacts.request().isGranted;
-
-  // ----------------------------------------------------
-  // REQUEST MULTIPLE (USED BY PAGES)
-  // ----------------------------------------------------
+  // --------------------------------------------------------
+  // REQUEST ALL PERMISSIONS
+  // --------------------------------------------------------
   static Future<bool> requestAllPermissions() async {
-    final statuses = await [
+    final status = await [
+      Permission.contacts,
+      Permission.phone,
       Permission.microphone,
       Permission.storage,
-      Permission.phone,
-      Permission.contacts,
     ].request();
 
-    return statuses.values.every((status) => status.isGranted);
+    return status.values.every((e) => e.isGranted);
   }
 
-  // ----------------------------------------------------
-  // REQUEST PER PAGE
-  // ----------------------------------------------------
-  static Future<bool> requestAllForPage(
-      BuildContext context, {
-        required List<Permission> permissions,
-        required String message,
-      }) async {
-    bool granted = true;
-
-    for (final p in permissions) {
-      final result = await p.request();
-
-      if (!result.isGranted) {
-        granted = false;
-      }
-    }
-
-    if (!granted && context.mounted) {
-      await showDialog(
-        context: context,
-        builder: (c) => AlertDialog(
-          title: const Text("Permission Required"),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text("Cancel"),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(c);
-                permission_handler.openAppSettings();
-              },
-              child: const Text("Open Settings"),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return granted;
+  // --------------------------------------------------------
+  static Future<bool> hasAllPermissions() async {
+    return await Permission.contacts.isGranted &&
+        await Permission.phone.isGranted &&
+        await Permission.microphone.isGranted &&
+        await Permission.storage.isGranted;
   }
 }

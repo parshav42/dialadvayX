@@ -58,25 +58,54 @@ class CallRecorderService : Service() {
     private fun startRecording(intent: Intent?) {
         try {
             // Prepare folder
-            val folder = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "AdvayX_Recordings")
+            val folder = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), 
+                "AdvayX_Recordings"
+            )
             if (!folder.exists()) folder.mkdirs()
 
             val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val number = intent?.getStringExtra("number") ?: "unknown"
             currentNumber = number
 
-            val file = File(folder, "${number}_$ts.m4a")
+            val file = File(folder, "AdvayX_${number}_$ts.m4a")
             currentFilePath = file.absolutePath
 
+            // Release any existing recorder instance
+            releaseRecorder()
+
             recorder = MediaRecorder().apply {
-                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
-                setAudioEncodingBitRate(128000)
-                setOutputFile(currentFilePath)
-                prepare()
-                start()
+                try {
+                    // Try different audio sources in order of preference
+                    val audioSource = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                    } else {
+                        MediaRecorder.AudioSource.VOICE_CALL
+                    }
+                    
+                    setAudioSource(audioSource)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioSamplingRate(44100)
+                    setAudioEncodingBitRate(128000)
+                    setOutputFile(currentFilePath)
+                    
+                    // Additional settings for better compatibility
+                    setAudioChannels(1) // Mono recording
+                    setMaxDuration(0) // No limit on duration
+                    setOnErrorListener { _, what, extra ->
+                        Log.e("AdvayX", "MediaRecorder error: $what, $extra")
+                    }
+                    
+                    prepare()
+                    start()
+                    
+                    Log.d("AdvayX", "Recording started: $currentFilePath")
+                } catch (e: Exception) {
+                    Log.e("AdvayX", "Error in MediaRecorder setup: ${e.message}")
+                    releaseRecorder()
+                    throw e
+                }
             }
 
             // Insert minimal calllog entry (custom field)
@@ -86,18 +115,42 @@ class CallRecorderService : Service() {
         }
     }
 
+    private fun releaseRecorder() {
+        try {
+            recorder?.apply {
+                try {
+                    stop()
+                } catch (e: IllegalStateException) {
+                    Log.e("AdvayX", "Error stopping recorder: ${e.message}")
+                }
+                reset()
+                release()
+            }
+        } catch (e: Exception) {
+            Log.e("AdvayX", "Error releasing recorder: ${e.message}")
+        } finally {
+            recorder = null
+        }
+    }
+
     private fun stopRecording() {
         val filePath = currentFilePath
         
-        try { recorder?.stop() } catch (_: Exception) {}
-        try { recorder?.reset() } catch (_: Exception) {}
-        try { recorder?.release() } catch (_: Exception) {}
+        // Release the recorder
+        releaseRecorder()
         
         // Send broadcast with recording path
         filePath?.let { path ->
-            val intent = Intent("com.a3s.advayx.RECORDING_COMPLETE")
-            intent.putExtra("filePath", path)
-            sendBroadcast(intent)
+            // Verify the file exists and has content before broadcasting
+            val file = File(path)
+            if (file.exists() && file.length() > 0) {
+                val intent = Intent("com.a3s.advayx.RECORDING_COMPLETE")
+                intent.putExtra("filePath", path)
+                sendBroadcast(intent)
+                Log.d("AdvayX", "Recording saved: $path (${file.length()} bytes)")
+            } else {
+                Log.e("AdvayX", "Recording file not found or empty: $path")
+            }
         }
         
         recorder = null

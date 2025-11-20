@@ -63,4 +63,17 @@ class SpeakHistoryStore {
 
     await prefs.setString(_key, encoded);
   }
+
+  Future<void> clearEntries(String id) async {
+    final all = await _loadAll();
+    all.remove(id);
+    
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(
+      all.map((key, value) => 
+          MapEntry(key, value.map((e) => e.toJson()).toList())),
+    );
+    
+    await prefs.setString(_key, encoded);
+  }
 }

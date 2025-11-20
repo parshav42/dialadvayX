@@ -171,7 +171,37 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onDestroy() {
-        stopRecording()
+        // Stop the recording service when the activity is destroyed
+        try {
+            val serviceIntent = Intent(this, CallRecorderService::class.java)
+            serviceIntent.action = CallRecorderService.ACTION_STOP
+            startService(serviceIntent)
+        } catch (e: Exception) {
+            Log.e("AdvayX", "Error stopping service: ${e.message}")
+        }
+        
+        // Release resources
+        recorder?.release()
+        recorder = null
+        
         super.onDestroy()
+    }
+    
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        
+        if (requestCode == 1001) {
+            val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+            if (allGranted) {
+                // Permissions granted, you might want to restart the service
+                Log.d("AdvayX", "All permissions granted")
+            } else {
+                Log.e("AdvayX", "Some permissions were not granted")
+            }
+        }
     }
 }

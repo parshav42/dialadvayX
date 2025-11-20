@@ -1,16 +1,19 @@
-// Update the imports at the top of record_page.dart
-import 'dart:io';
+// lib/pages/record_page.dart
 
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 import '../services/call_log.dart';
-import '../services/permission_service.dart';
 import '../widgets/recording_item.dart';
 
 class RecordPage extends StatefulWidget {
-  const RecordPage({Key? key}) : super(key: key);
+  final CallLogEntry? initialCall;
+  
+  const RecordPage({Key? key, this.initialCall}) : super(key: key);
 
   @override
   _RecordPageState createState() => _RecordPageState();
@@ -20,140 +23,147 @@ class _RecordPageState extends State<RecordPage>
     with SingleTickerProviderStateMixin {
   final CallLogStore _store = CallLogStore();
   final AudioPlayer _player = AudioPlayer();
-  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _search = TextEditingController();
 
   List<CallLogEntry> _recordings = [];
-  bool _isLoading = true;
-  String? _currentlyPlayingId;
-  int _currentTabIndex = 0;
-  late TabController _tabController;
+  String? _playingId;
+
+  int _tabIndex = 0;
+  late TabController _tabs;
+
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadRecordings();
-    _player.onPlayerComplete.listen((_) {
-      if (mounted) {
-        setState(() => _currentlyPlayingId = null);
+    _tabs = TabController(length: 3, vsync: this);
+    _tabs.addListener(() {
+      setState(() => _tabIndex = _tabs.index);
+    });
+
+    _load().then((_) {
+      // If we have an initial call, find and play it
+      if (widget.initialCall != null) {
+        // Find the call in our loaded recordings
+        final call = _recordings.firstWhere(
+          (entry) => entry.id == widget.initialCall!.id,
+          orElse: () => widget.initialCall!,
+        );
+        
+        // If the call has a recording, play it
+        if (call.filePath != null && call.filePath!.isNotEmpty) {
+          _play(call);
+        }
       }
+    });
+    
+    _player.onPlayerComplete.listen((_) {
+      setState(() => _playingId = null);
     });
   }
 
   @override
   void dispose() {
     _player.dispose();
-    _searchController.dispose();
-    _tabController.dispose();
+    _search.dispose();
+    _tabs.dispose();
     super.dispose();
   }
 
-  Future<void> _loadRecordings() async {
-    if (!mounted) return;
+  // ------------------------------------------------------------
+  // LOAD HISTORY + RECORDINGS
+  // ------------------------------------------------------------
+  Future<void> _load() async {
+    setState(() => _loading = true);
 
-    setState(() => _isLoading = true);
     try {
-      final logs = await _store.load();// Changed from getCallLogs to getAllLogs
-      logs.sort((a, b) => b.when.compareTo(a.when));
+      final list = await _store.load(); // reads all logs
+      list.sort((a, b) => b.when.compareTo(a.when));
 
-      if (mounted) {
-        setState(() {
-          _recordings = logs;
-          _isLoading = false;
-        });
-      }
+      setState(() {
+        _recordings = list;
+        _loading = false;
+      });
     } catch (e) {
-      debugPrint('Error loading recordings: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      debugPrint("Error loading logs: $e");
+      setState(() => _loading = false);
     }
   }
 
-  List<CallLogEntry> get _filteredRecordings {
-    return _recordings.where((recording) {
-      if (_currentTabIndex == 1 && !recording.isSaved) return false;
-      if (_currentTabIndex == 2 && !recording.isDeleted) return false;
+  // ------------------------------------------------------------
+  // FILTER RECORDINGS
+  // ------------------------------------------------------------
+  List<CallLogEntry> get _filtered {
+    final q = _search.text.toLowerCase();
 
-      final query = _searchController.text.toLowerCase();
-      if (query.isEmpty) return true;
+    return _recordings.where((entry) {
+      // Tabs filtering
+      if (_tabIndex == 1 && !entry.isSaved) return false;
+      if (_tabIndex == 2 && !entry.isDeleted) return false;
 
-      return recording.number.toLowerCase().contains(query) ||
-          (recording.name?.toLowerCase().contains(query) ?? false);
+      // Search
+      if (q.isNotEmpty) {
+        final n = entry.name?.toLowerCase() ?? "";
+        final ph = entry.number.toLowerCase();
+        return n.contains(q) || ph.contains(q);
+      }
+
+      return true;
     }).toList();
   }
 
-  Future<void> _playRecording(CallLogEntry entry) async {
-    if (entry.filePath == null) {
-      debugPrint('Error: No file path for recording');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error: No recording file found')),
-        );
-      }
+  // ------------------------------------------------------------
+  // PLAY / STOP AUDIO
+  // ------------------------------------------------------------
+  Future<void> _play(CallLogEntry e) async {
+    if (e.filePath == null || e.filePath!.isEmpty) {
+      _error("Recording file missing.");
       return;
     }
 
-    if (_currentlyPlayingId == entry.id) {
-      debugPrint('Stopping current playback');
+    final file = File(e.filePath!);
+
+    if (!file.existsSync()) {
+      _error("Recording file not found.");
+      return;
+    }
+
+    // Stop if already playing
+    if (_playingId == e.id) {
       await _player.stop();
-      setState(() => _currentlyPlayingId = null);
+      setState(() => _playingId = null);
       return;
     }
 
     try {
-      debugPrint('Attempting to play: ${entry.filePath}');
       await _player.stop();
-      
-      // Check if file exists and is accessible
-      final file = File(entry.filePath!);
-      if (!await file.exists()) {
-        debugPrint('Error: File does not exist at path: ${entry.filePath}');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Error: Recording file not found')),
-          );
-        }
-        return;
-      }
+      await _player.play(DeviceFileSource(e.filePath!));
 
-      // Configure audio player
-      _player.setReleaseMode(ReleaseMode.stop);
-      
-      // Try playing with file path directly first
-      try {
-        await _player.play(DeviceFileSource(entry.filePath!));
-        debugPrint('Playback started successfully');
-        setState(() => _currentlyPlayingId = entry.id);
-      } catch (e) {
-        debugPrint('Error with DeviceFileSource, trying with UrlSource: $e');
-        // Fallback to UrlSource if DeviceFileSource fails
-        await _player.play(UrlSource(entry.filePath!));
-        debugPrint('Playback started with UrlSource');
-        setState(() => _currentlyPlayingId = entry.id);
-      }
-    } catch (e) {
-      debugPrint('Error playing recording: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error playing recording: ${e.toString()}')),
-        );
-      }
+      setState(() => _playingId = e.id);
+    } catch (ex) {
+      debugPrint("Audio error: $ex");
+      _error("Unable to play this recording.");
     }
   }
 
+  void _error(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // ------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Recordings'),
+        title: const Text('Call Recordings'),
         bottom: TabBar(
-          controller: _tabController,
-          onTap: (index) => setState(() => _currentTabIndex = index),
+          controller: _tabs,
           tabs: const [
-            Tab(icon: Icon(Icons.mic, color: Colors.blue)),
-            Tab(icon: Icon(Icons.bookmark, color: Colors.blue)),
-            Tab(icon: Icon(Icons.delete, color: Colors.blue)),
+            Tab(text: 'All'),
+            Tab(text: 'Saved'),
+            Tab(text: 'Deleted'),
           ],
         ),
       ),
@@ -162,93 +172,205 @@ class _RecordPageState extends State<RecordPage>
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
-              controller: _searchController,
+              controller: _search,
               decoration: InputDecoration(
                 hintText: 'Search recordings...',
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(10.0),
                 ),
               ),
               onChanged: (_) => setState(() {}),
             ),
           ),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredRecordings.isEmpty
-                ? _buildEmptyState()
-                : ListView.builder(
-              itemCount: _filteredRecordings.length,
-              itemBuilder: (context, index) {
-                final recording = _filteredRecordings[index];
-                return RecordingItem(
-                  entry: recording,
-                  isPlaying: _currentlyPlayingId == recording.id,
-                  onPlayPause: () => _playRecording(recording),
-                  onToggleSave: () async {
-                    await _store.toggleSave(recording.id);
-                    await _loadRecordings();
-                  },
-                  onDelete: () async {
-                    await _store.moveToTrash(recording.id);
-                    await _loadRecordings();
-                  },
-                  onRestore: () async {
-                    await _store.restoreFromTrash(recording.id);
-                    await _loadRecordings();
-                  },
-                  onDeletePermanently: () async {
-                    await _store.deletePermanently(recording.id);
-                    await _loadRecordings();
-                  },
-                );
-              },
-            ),
-          ),
+          Expanded(child: _buildBody()),
         ],
       ),
     );
   }
 
-  Widget _buildEmptyState() {
-    IconData icon;
-    String text;
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    if (_searchController.text.isNotEmpty) {
+    final filtered = _filtered;
+    
+    if (filtered.isEmpty) {
+      return _empty();
+    }
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
+        itemCount: filtered.length,
+        itemBuilder: (context, index) {
+          final entry = filtered[index];
+          return Card(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: ListTile(
+              leading: IconButton(
+                icon: Icon(
+                  _playingId == entry.id ? Icons.pause : Icons.play_arrow,
+                  color: Colors.blue,
+                  size: 32,
+                ),
+                onPressed: () => _play(entry),
+              ),
+              title: Text(
+                entry.name ?? entry.number,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(entry.number),
+                  Text(
+                    '${_formatDate(entry.when)} • ${_formatDuration(entry.duration)}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+              trailing: PopupMenuButton<String>(
+                onSelected: (value) {
+                  switch (value) {
+                    case 'save':
+                      _toggleSave(entry);
+                      break;
+                    case 'share':
+                      _share(entry);
+                      break;
+                    case 'delete':
+                      _delete(entry);
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'save',
+                    child: Row(
+                      children: [
+                        Icon(entry.isSaved ? Icons.bookmark_remove : Icons.bookmark_add),
+                        const SizedBox(width: 8),
+                        Text(entry.isSaved ? 'Unsave' : 'Save'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'share',
+                    child: Row(
+                      children: [
+                        Icon(Icons.share),
+                        SizedBox(width: 8),
+                        Text('Share'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Delete', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------
+  // EMPTY UI
+  // ------------------------------------------------------------
+  Widget _empty() {
+    IconData icon;
+    String msg;
+    String? subMsg;
+
+    if (_search.text.isNotEmpty) {
       icon = Icons.search_off;
-      text = 'No matching recordings found';
+      msg = "No matching results";
+    } else if (_tabIndex == 1) {
+      icon = Icons.bookmark_border;
+      msg = "No saved recordings";
+    } else if (_tabIndex == 2) {
+      icon = Icons.delete_outline;
+      msg = "Trash is empty";
     } else {
-      switch (_currentTabIndex) {
-        case 1:
-          icon = Icons.bookmark_border;
-          text = 'No saved recordings';
-          break;
-        case 2:
-          icon = Icons.delete_outline;
-          text = 'Trash is empty';
-          break;
-        default:
-          icon = Icons.mic_none;
-          text = 'No recordings yet';
-      }
+      icon = Icons.mic_none;
+      msg = "No recordings yet";
+      subMsg = "Your call recordings will appear here";
     }
 
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey.shade600,
-            ),
-          ),
+          Icon(icon, size: 60, color: Colors.grey),
+          const SizedBox(height: 15),
+          Text(msg, style: const TextStyle(fontSize: 18, color: Colors.grey)),
+          if (subMsg != null) ...[
+            const SizedBox(height: 8),
+            Text(subMsg, style: const TextStyle(color: Colors.grey)),
+          ],
         ],
       ),
     );
+  }
+
+  // Helper methods
+  String _formatDate(DateTime date) {
+    return DateFormat('MMM d, y • h:mm a').format(date);
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    
+    if (hours > 0) {
+      return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    } else {
+      return '${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+  }
+
+  Future<void> _toggleSave(CallLogEntry entry) async {
+    await _store.toggleSave(entry.id);
+    await _load();
+  }
+
+  Future<void> _share(CallLogEntry entry) async {
+    if (entry.filePath == null || entry.filePath!.isEmpty) {
+      _error('No recording file available to share');
+      return;
+    }
+
+    try {
+      await Share.shareFiles(
+        [entry.filePath!],
+        text: 'Call recording with ${entry.name ?? entry.number}',
+      );
+    } catch (e) {
+      _error('Failed to share recording');
+    }
+  }
+
+  Future<void> _delete(CallLogEntry entry) async {
+    if (entry.isDeleted) {
+      await _store.deletePermanently(entry.id);
+    } else {
+      await _store.moveToTrash(entry.id);
+    }
+    await _load();
   }
 }
